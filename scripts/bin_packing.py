@@ -1,233 +1,237 @@
-import matplotlib.pyplot as plt
-from matplotlib.path import Path
 import numpy as np
+import matplotlib.pyplot as plt
+from shapely import affinity
+from shapely.geometry import Polygon, MultiPolygon
+from shapely.ops import unary_union
+from descartes import PolygonPatch
 
 # === Fabric Configuration ===
 FABRIC_WIDTH = 300  # in cm
 FABRIC_HEIGHT = 600  # in cm
-SET_COUNT = 22  # Number of full garments you want to produce
+SET_COUNT = 15  # Number of full garments you want to produce
 
 # === Garment Part Definitions ===
 garment_parts = [
-    {"name": "front", "width": 50.77, "height": 51.28, "quantity": SET_COUNT},
-    {"name": "back", "width": 50.77, "height": 51.28, "quantity": SET_COUNT},
-    {"name": "sleeve", "width": 23.98, "height": 42.45, "quantity": SET_COUNT * 2}
+    {
+        "name": "front",
+        "outline": [(0, 0), (50, 0), (45, 20), (40, 50), (0, 50)],
+        "quantity": SET_COUNT,
+        "allow_rotation": True
+    },
+    {
+        "name": "back",
+        "outline": [(0, 0), (50, 0), (45, 20), (40, 50), (0, 50)],
+        "quantity": SET_COUNT,
+        "allow_rotation": True
+    },
+    {
+        "name": "sleeve",
+        "outline": [(0, 0), (25, 0), (20, 40), (5, 40)],
+        "quantity": SET_COUNT * 2,
+        "allow_rotation": True
+    }
 ]
 
 
-def point_in_polygon(point, polygon):
-    """Check if a point is inside a polygon"""
-    path = Path(polygon)
-    return path.contains_point(point)
+# === Core Placement Engine ===
+class FabricNester:
+    def __init__(self, width, height):
+        self.fabric = Polygon([(0, 0), (width, 0), (width, height), (0, height)])
+        self.free_space = [self.fabric]
+        self.placed_parts = []
 
+    @staticmethod
+    def translate_polygon(poly, translation):
+        """Proper translation for Shapely polygons"""
+        dx, dy = translation
+        return affinity.translate(poly, xoff=dx, yoff=dy)
 
-def polygons_overlap(poly_a, poly_b):
-    """Check if two polygons overlap"""
-    path_a = Path(poly_a)
-    path_b = Path(poly_b)
+    def place_part(self, part):
+        original_poly = Polygon(part["outline"])
+        best_score = -np.inf
+        best_placement = None
 
-    # Check if any vertex of A is inside B
-    for point in poly_a:
-        if path_b.contains_point(point):
+        rotations = self.generate_rotations(original_poly, part["allow_rotation"])
+
+        for rotated_poly in rotations:
+            for position in self.generate_positions(rotated_poly):
+                # Corrected translation call
+                translated_poly = self.translate_polygon(rotated_poly, position)
+
+                if not self.check_fit(translated_poly):
+                    continue
+
+                score = self.score_placement(translated_poly)
+
+                if score > best_score:
+                    best_score = score
+                    best_placement = translated_poly
+
+        if best_placement:
+            self.commit_placement(best_placement, part)
             return True
+        return False
 
-    # Check if any vertex of B is inside A
-    for point in poly_b:
-        if path_a.contains_point(point):
-            return True
+    def generate_rotations(self, poly, allow_rotation):
+        rotations = [poly]
+        if allow_rotation:
+            for angle in [90, 180, 270]:
+                rotated = self.rotate_polygon(poly, angle)
+                rotations.append(rotated)
+        return rotations
 
-    # Check edge intersections (simplified)
-    # for i in range(len(poly_a)):
-    #     for j in range(len(poly_b)):
-    #         if line_intersect(poly_a[i - 1], poly_a[i], poly_b[j - 1], poly_b[j]):
-    #             return True
-    return False
+    def rotate_polygon(self, poly, angle):
+        """Rotate polygon around its centroid"""
+        centroid = np.array(poly.centroid.coords[0])
+        points = np.array(poly.exterior.coords)
+
+        # Rotation matrix
+        theta = np.radians(angle)
+        rot_matrix = np.array([
+            [np.cos(theta), -np.sin(theta)],
+            [np.sin(theta), np.cos(theta)]
+        ])
+
+        # Apply rotation
+        rotated = (points - centroid) @ rot_matrix + centroid
+        return Polygon(rotated)
+
+    def generate_positions(self, poly):
+        """Generate candidate positions using NFP (No-Fit Polygon) approach"""
+        # Simplified version - actual NFP would be more complex
+        min_x, min_y, max_x, max_y = self.fabric.bounds
+        part_width = poly.bounds[2] - poly.bounds[0]
+        part_height = poly.bounds[3] - poly.bounds[1]
+
+        step = max(part_width, part_height) / 2
+        for x in np.arange(min_x, max_x - part_width, step):
+            for y in np.arange(min_y, max_y - part_height, step):
+                yield (x, y)
+
+        # Add edge snapping positions
+        if self.placed_parts:
+            for placed in self.placed_parts:
+                for point in placed.exterior.coords:
+                    yield (point[0], point[1])
+
+    def check_fit(self, poly):
+        """Check if polygon fits in free space and doesn't collide"""
+        # Check fabric bounds
+        if not self.fabric.contains(poly):
+            return False
+
+        # Check collision with placed parts
+        for placed in self.placed_parts:
+            if poly.intersects(placed):
+                return False
+
+        return True
+
+    def score_placement(self, poly):
+        """Evaluate placement quality"""
+        score = 0
+
+        # 1. Prefer placements that maximize remaining contiguous space
+        remaining = self.fabric.difference(poly)
+        if isinstance(remaining, MultiPolygon):
+            largest_remaining = max(remaining.geoms, key=lambda p: p.area)
+        else:
+            largest_remaining = remaining
+
+        score += largest_remaining.area * 0.1
+
+        # 2. Prefer alignments with fabric edges
+        min_dist_to_edge = min(
+            self.fabric.exterior.distance(poly),
+            poly.distance(self.fabric)
+        )
+        score += 100 / (1 + min_dist_to_edge)
+
+        # 3. Prefer compact arrangements (minimize bounding box)
+        all_parts = self.placed_parts + [poly]
+        combined = unary_union(all_parts)
+        score -= combined.envelope.area * 0.01
+
+        return score
+
+    def commit_placement(self, poly, part_data):
+        """Finalize the placement"""
+        self.placed_parts.append(poly)
+
+        # Update free space
+        new_free = []
+        for space in self.free_space:
+            difference = space.difference(poly)
+            if difference.is_empty:
+                continue
+            if isinstance(difference, MultiPolygon):
+                new_free.extend(difference.geoms)
+            else:
+                new_free.append(difference)
+        self.free_space = new_free
 
 
-def line_intersect(a1, a2, b1, b2):
-    """Check if line segments a1-a2 and b1-b2 intersect"""
-    # Implementation of line segment intersection test
-    # (Can use cross-product method)
-    pass
+def calculate_utilization(nester):
+    total_area = nester.fabric.area
+    used_area = sum(p.area for p in nester.placed_parts)
+    return used_area / total_area
 
 
-# === Generate All Parts to Place ===
-def expand_parts(part_defs):
-    expanded = []
-    for part in part_defs:
+# === Execution ===
+def run_nesting():
+    nester = FabricNester(FABRIC_WIDTH, FABRIC_HEIGHT)
+
+    # Prepare all parts to place
+    all_parts = []
+    for part in garment_parts:
         for i in range(part["quantity"]):
-            expanded.append({
+            all_parts.append({
                 "name": part["name"],
-                "width": part["width"],
-                "height": part["height"],
-                "instance": i + 1  # For labeling
+                "outline": part["outline"],
+                "allow_rotation": part.get("allow_rotation", False),
+                "instance": i + 1
             })
-    return expanded
 
+    # Try to place each part
+    for part in all_parts:
+        success = nester.place_part(part)
+        if not success:
+            print(f"Failed to place {part['name']}-{part['instance']}")
 
-# === Placement Helpers ===
-def fits(part, rect):
-    return part["width"] <= rect["width"] and part["height"] <= rect["height"]
-
-
-def split_space(rect, part):
-    new_rects = []
-    rem_w = rect["width"] - part["width"]
-    rem_h = rect["height"] - part["height"]
-
-    if rem_w > 0:
-        new_rects.append({
-            "x": rect["x"] + part["width"],
-            "y": rect["y"],
-            "width": rem_w,
-            "height": part["height"]
-        })
-
-    if rem_h > 0:
-        new_rects.append({
-            "x": rect["x"],
-            "y": rect["y"] + part["height"],
-            "width": rect["width"],
-            "height": rem_h
-        })
-
-    return new_rects
-
-
-def check_overlap(part, placed_rects):
-    for placed in placed_rects:
-        if not (
-                part["x"] + part["width"] <= placed["x"] or
-                part["x"] >= placed["x"] + placed["width"] or
-                part["y"] + part["height"] <= placed["y"] or
-                part["y"] >= placed["y"] + placed["height"]
-        ):
-            return True  # Overlaps
-    return False
-
-
-def place_parts_on_fabric(fabric_w, fabric_h, parts):
-    placed_parts = []
-    free_rects = [{"x": 0, "y": 0, "width": fabric_w, "height": fabric_h}]
-
-    # Sort parts by area in descending order (largest first)
-    parts_sorted = sorted(parts, key=lambda p: p["width"] * p["height"], reverse=True)
-
-    for part in parts_sorted:
-        # Sort free rectangles by best fit (smallest remaining area after placement)
-        free_rects.sort(key=lambda r: (r["width"] - part["width"]) * (r["height"] - part["height"]))
-
-        placed = False
-        for i, rect in enumerate(free_rects):
-            # Try both orientations (original and rotated)
-            for width, height in [(part["width"], part["height"]), (part["height"], part["width"])]:
-                if width <= rect["width"] and height <= rect["height"]:
-                    candidate = {
-                        "name": part["name"],
-                        "x": rect["x"],
-                        "y": rect["y"],
-                        "width": width,
-                        "height": height,
-                        "instance": part["instance"]
-                    }
-
-                    if check_overlap(candidate, placed_parts):
-                        continue
-
-                    # Place the part
-                    placed_parts.append(candidate)
-
-                    # Split the remaining space (maximize the larger dimension)
-                    new_rects = []
-                    rem_w = rect["width"] - width
-                    rem_h = rect["height"] - height
-
-                    if rem_w >= rem_h:
-                        if rem_w > 0:
-                            new_rects.append({
-                                "x": rect["x"] + width,
-                                "y": rect["y"],
-                                "width": rem_w,
-                                "height": rect["height"]
-                            })
-                        if rem_h > 0:
-                            new_rects.append({
-                                "x": rect["x"],
-                                "y": rect["y"] + height,
-                                "width": width,
-                                "height": rem_h
-                            })
-                    else:
-                        if rem_h > 0:
-                            new_rects.append({
-                                "x": rect["x"],
-                                "y": rect["y"] + height,
-                                "width": rect["width"],
-                                "height": rem_h
-                            })
-                        if rem_w > 0:
-                            new_rects.append({
-                                "x": rect["x"] + width,
-                                "y": rect["y"],
-                                "width": rem_w,
-                                "height": height
-                            })
-
-                    free_rects.pop(i)
-                    free_rects.extend(new_rects)
-                    placed = True
-                    break
-            if placed:
-                break
-
-        if not placed:
-            return None  # Packing failed
-
-    return placed_parts
+    visualize(nester)
 
 
 # === Visualization ===
-def visualize_parts(placed_parts, fabric_w, fabric_h):
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.set_xlim(0, fabric_w)
-    ax.set_ylim(0, fabric_h)
-    ax.set_title(f"Fabric Layout for {SET_COUNT} Garments")
-    ax.set_xlabel("Width (cm)")
-    ax.set_ylabel("Height (cm)")
+def visualize(nester):
+    fig, ax = plt.subplots(figsize=(12, 8))
 
-    colors = ['skyblue', 'salmon', 'lightgreen', 'plum', 'orange', 'lightgray']
+    # Draw fabric
+    fabric_x, fabric_y = nester.fabric.exterior.xy
+    ax.fill(fabric_x, fabric_y, 'lightgray', alpha=0.2, zorder=1)
 
-    for i, part in enumerate(placed_parts):
-        color = colors[i % len(colors)]
-        ax.add_patch(plt.Rectangle(
-            (part["x"], part["y"]),
-            part["width"],
-            part["height"],
-            edgecolor='black',
-            facecolor=color,
-            alpha=0.8
-        ))
-        ax.text(
-            part["x"] + part["width"] / 2,
-            part["y"] + part["height"] / 2,
-            f'{part["name"]}\n#{part["instance"]}',
-            ha='center',
-            va='center',
-            fontsize=7
-        )
+    # Draw placed parts
+    colors = plt.cm.tab20.colors
+    for i, part in enumerate(nester.placed_parts):
+        # Handle both Polygon and MultiPolygon cases
+        if part.geom_type == 'Polygon':
+            x, y = part.exterior.xy
+            ax.fill(x, y, fc=colors[i % len(colors)], ec='black', alpha=0.7, zorder=2)
+        elif part.geom_type == 'MultiPolygon':
+            for poly in part.geoms:
+                x, y = poly.exterior.xy
+                ax.fill(x, y, fc=colors[i % len(colors)], ec='black', alpha=0.7, zorder=2)
 
-    plt.gca().invert_yaxis()
-    plt.grid(True)
-    plt.tight_layout()
+        # Add label at centroid
+        centroid = part.centroid
+        ax.text(centroid.x, centroid.y, f"Part {i + 1}",
+                ha='center', va='center', fontsize=8)
+
+    ax.set_xlim(0, FABRIC_WIDTH)
+    ax.set_ylim(0, FABRIC_HEIGHT)
+    ax.set_aspect('equal')
+    plt.gca().invert_yaxis()  # Textile convention
+    plt.title(f"Fabric Layout (Utilization: {calculate_utilization(nester):.1%})")
     plt.show()
 
 
-# === Run the Packing ===
-all_parts = expand_parts(garment_parts)
-result = place_parts_on_fabric(FABRIC_WIDTH, FABRIC_HEIGHT, all_parts)
-
-if result:
-    print(f"✅ Successfully packed all {SET_COUNT} full garments into the fabric.")
-    visualize_parts(result, FABRIC_WIDTH, FABRIC_HEIGHT)
-else:
-    print(f"❌ Not enough space to pack {SET_COUNT} full garments into the fabric.")
+run_nesting()
