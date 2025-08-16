@@ -11,13 +11,12 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('design_creation_processes', function (Blueprint $table) {
+        Schema::create('fabrics', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('user_id')->constrained();
-            $table->integer('current_step')->default(1);
-            $table->json('completed_steps')->nullable();
-            $table->json('design_data')->nullable();
-            $table->boolean('is_completed')->default(false);
+            $table->foreignId('design_id')->constrained()->onDelete('cascade');
+            $table->integer('width');
+            $table->integer('height');
+            $table->json('cut_positions')->nullable();
             $table->timestamps();
         });
     }
@@ -27,6 +26,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('design_creation_processes');
+        Schema::dropIfExists('fabrics');
     }
 };

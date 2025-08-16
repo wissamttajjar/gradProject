@@ -8,6 +8,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Passport\Contracts\OAuthenticatable;
 use Laravel\Passport\HasApiTokens;
+use App\Models\Design;
 
 
 class User extends Authenticatable implements OAuthenticatable
@@ -50,13 +51,9 @@ class User extends Authenticatable implements OAuthenticatable
         ];
     }
 
-    public function comments(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function designs(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(Design::class);
     }
-//
-//    public function preferences(): \Illuminate\Database\Eloquent\Relations\HasOne
-//    {
-//        return $this->hasOne(Preference::class);
-//    }
+
 }

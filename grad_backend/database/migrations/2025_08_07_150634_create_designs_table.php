@@ -18,9 +18,6 @@ return new class extends Migration
             $table->string('collar_type');
             $table->string('color');
             $table->string('fabric_type');
-//            $table->string('image_1');
-//            $table->string('image_2');
-//            $table->string('image_3');
             $table->timestamps();
         });
     }
