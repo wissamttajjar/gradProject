@@ -10,7 +10,7 @@ import time
 # === Configuration ===
 FABRIC_WIDTH = 300
 FABRIC_HEIGHT = 600
-SET_COUNT = 40
+SET_COUNT = 2
 
 # === Complex Shape Definitions ===
 garment_parts = [

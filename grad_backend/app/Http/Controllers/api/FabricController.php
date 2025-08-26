@@ -1,47 +1,60 @@
 <?php
 
-namespace app\Http\Controllers\api;
+namespace App\Http\Controllers\api;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Models\Design;
 use App\Models\Fabric;
-
+use Illuminate\Http\Request;
 
 class FabricController extends Controller
 {
-
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'design_id'     => 'required|integer|exists:designs,id',
-            'width'         => 'required|integer',
-            'height'        => 'required|integer',
-            'cut_positions' => 'nullable|json',
+            'design_id' => 'required|integer|exists:designs,id',
+            'width'     => 'required|integer|min:1',
+            'height'    => 'required|integer|min:1',
         ]);
 
-        if ($request->user()->designs()->where('id', $validated['design_id'])->doesntExist()) {
-             return response()->json(['message' => 'Unauthorized.'], 403);
-         }
+        $design = Design::findOrFail($validated['design_id']);
 
-        $fabric = Fabric::create($validated);
+        if ($request->user()->id !== $design->user_id) {
+            return response()->json(['message' => 'Unauthorized.'], 403);
+        }
+
+        // Get pattern pieces from the design
+        $pieces = $design->getPatternPieces();
+        if (!$pieces) {
+            return response()->json(['message' => 'Design has no pattern pieces'], 400);
+        }
+
+        $fabric = Fabric::create([
+            'design_id' => $validated['design_id'],
+            'width'     => $validated['width'],
+            'height'    => $validated['height'],
+            'cut_positions' => null
+        ]);
 
         return response()->json([
             'message' => 'Fabric created successfully!',
-            'fabric'  => $fabric
+            'fabric'  => $fabric,
+            'pattern_pieces' => $pieces
         ], 201);
     }
-
 
     public function update(Request $request, Fabric $fabric)
     {
         if ($request->user()->id !== $fabric->design->user_id) {
-            return response()->json(['message' => 'Unauthorized. You do not have permission to update this fabric.'], 403);
+            return response()->json([
+                'message' => 'Unauthorized. You do not have permission to update this fabric.'
+            ], 403);
         }
 
         $validated = $request->validate([
-            'width'         => 'nullable|integer',
-            'height'        => 'nullable|integer',
-            'cut_positions' => 'nullable|json',
+            'width'  => 'nullable|integer|min:1',
+            'height' => 'nullable|integer|min:1',
+            'size'   => 'nullable|string|in:38,40,42,44,46,48',
         ]);
 
         $fabric->update($validated);
@@ -52,17 +65,40 @@ class FabricController extends Controller
         ], 200);
     }
 
-
     public function destroy(Request $request, Fabric $fabric)
     {
         if ($request->user()->id !== $fabric->design->user_id) {
-            return response()->json(['message' => 'Unauthorized. You do not have permission to delete this fabric.'], 403);
+            return response()->json([
+                'message' => 'Unauthorized. You do not have permission to delete this fabric.'
+            ], 403);
         }
 
         $fabric->delete();
 
         return response()->json([
             'message' => 'Fabric deleted successfully!'
+        ], 200);
+    }
+
+    public function show(Request $request, Fabric $fabric)
+    {
+        if ($request->user()->id !== $fabric->design->user_id) {
+            return response()->json([
+                'message' => 'Unauthorized. You do not have permission to view this fabric.'
+            ], 403);
+        }
+
+        return response()->json([
+            'fabric' => $fabric
+        ], 200);
+    }
+
+    public function index(Request $request)
+    {
+        $fabrics = $request->user()->fabrics()->with('design')->get();
+
+        return response()->json([
+            'fabrics' => $fabrics
         ], 200);
     }
 }
