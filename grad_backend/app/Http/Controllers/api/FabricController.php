@@ -5,6 +5,7 @@ namespace App\Http\Controllers\api;
 use App\Http\Controllers\Controller;
 use App\Models\Design;
 use App\Models\Fabric;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 
 class FabricController extends Controller
@@ -91,6 +92,31 @@ class FabricController extends Controller
         return response()->json([
             'fabric' => $fabric
         ], 200);
+    }
+
+    public function getPieces($id)
+    {
+        try {
+
+            $design = Design::with('patternRule')->findOrFail($id);
+
+            $pieces = $design->patternRule->pieces;
+
+            $size = $design->size;
+            $selectedPieces = $pieces[$size] ?? [];
+
+            return response()->json([
+                'design_id' => $design->id,
+                'size' => $size,
+                'pieces' => $selectedPieces
+            ]);
+
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'message' => 'No matching design found for the provided ID.'
+            ], 404);
+        }
+
     }
 
     public function index(Request $request)

@@ -3,10 +3,14 @@
 use App\Http\Controllers\api\AuthController;
 use App\Http\Controllers\api\DesignController;
 use App\Http\Controllers\api\FabricController;
+use App\Http\Controllers\api\PackingController;
 use App\Http\Controllers\api\PatternController;
 use Illuminate\Support\Facades\Route;
 
 //unauthenticated api functions
+Route::get('/designs/{id}/pieces', [FabricController::class, 'getPieces']);
+Route::post('/pack', [PackingController::class, 'pack']);
+
 
 //unauthenticated user api functions
 Route::post("register" , [AuthController::class , "register"]);
@@ -30,6 +34,8 @@ Route::group(["middleware" => ["auth:api"]] , function (){
     Route::post('/create_fabric', [FabricController::class, 'store']);
     Route::patch('/update_fabric/{fabric}', [FabricController::class, 'update']);
     Route::delete('/delete_fabric/{fabric}', [FabricController::class, 'destroy']);
+
+
 
 
 
