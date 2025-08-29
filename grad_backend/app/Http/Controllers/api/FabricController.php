@@ -16,6 +16,7 @@ class FabricController extends Controller
             'design_id' => 'required|integer|exists:designs,id',
             'width'     => 'required|integer|min:1',
             'height'    => 'required|integer|min:1',
+            'num_of_pieces'    => 'required|integer|min:1'
         ]);
 
         $design = Design::findOrFail($validated['design_id']);
@@ -34,6 +35,7 @@ class FabricController extends Controller
             'design_id' => $validated['design_id'],
             'width'     => $validated['width'],
             'height'    => $validated['height'],
+            'num_of_pieces' => $validated['num_of_pieces'],
             'cut_positions' => null
         ]);
 
@@ -54,8 +56,7 @@ class FabricController extends Controller
 
         $validated = $request->validate([
             'width'  => 'nullable|integer|min:1',
-            'height' => 'nullable|integer|min:1',
-            'size'   => 'nullable|string|in:38,40,42,44,46,48',
+            'height' => 'nullable|integer|min:1'
         ]);
 
         $fabric->update($validated);

@@ -16,7 +16,12 @@ return new class extends Migration
             $table->foreignId('design_id')->constrained()->onDelete('cascade');
             $table->integer('width');
             $table->integer('height');
+            $table->integer('num_of_pieces');
             $table->json('cut_positions')->nullable();
+            $table->json('packing_results')->nullable();
+            $table->string('layout_image_path')->nullable();
+            $table->string('coordinates_json_path')->nullable();
+            $table->decimal('utilization', 5, 2)->nullable();
             $table->timestamps();
         });
     }
